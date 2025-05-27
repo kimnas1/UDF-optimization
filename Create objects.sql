@@ -83,64 +83,6 @@ BEGIN
      Return @result
 END
 GO
-/****** Object:  UserDefinedFunction [dbo].[F_WORKS_LIST]    Script Date: 28.04.2024 19:21:25 ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-
-CREATE FUNCTION [dbo].[F_WORKS_LIST] (
-)
-RETURNS @RESULT TABLE
-(
-ID_WORK INT,
-CREATE_Date DATETIME,
-MaterialNumber DECIMAL(8,2),
-IS_Complit BIT,
-FIO VARCHAR(255),
-D_DATE varchar(10),
-WorkItemsNotComplit int,
-WorkItemsComplit int,
-FULL_NAME VARCHAR(101),
-StatusId smallint,
-StatusName VARCHAR(255),
-Is_Print bit
-)
-AS
--- СПИСОК РАБОТ
-begin
-insert into @result
-SELECT
-  Works.Id_Work,
-  Works.CREATE_Date,
-  Works.MaterialNumber,
-  Works.IS_Complit,
-  Works.FIO,
-  convert(varchar(10), works.CREATE_Date, 104 ) as D_DATE,
-  dbo.F_WORKITEMS_COUNT_BY_ID_WORK(works.Id_Work,0) as WorkItemsNotComplit,
-  dbo.F_WORKITEMS_COUNT_BY_ID_WORK(works.Id_Work,1) as WorkItemsComplit,
-  dbo.F_EMPLOYEE_FULLNAME(Works.Id_Employee) as EmployeeFullName,
-  Works.StatusId,
-  WorkStatus.StatusName,
-  case
-      when (Works.Print_Date is not null) or
-      (Works.SendToClientDate is not null) or
-      (works.SendToDoctorDate is not null) or
-      (Works.SendToOrgDate is not null) or
-      (Works.SendToFax is not null)
-      then 1
-      else 0
-  end as Is_Print  
-FROM
- Works
- left outer join WorkStatus on (Works.StatusId = WorkStatus.StatusID)
-where
- WORKS.IS_DEL <> 1
- order by id_work desc -- works.MaterialNumber desc
-return
-end
-
-GO
 /****** Object:  Table [dbo].[Analiz]    Script Date: 28.04.2024 19:21:25 ******/
 SET ANSI_NULLS ON
 GO
@@ -345,6 +287,54 @@ CREATE TABLE [dbo].[WorkStatus](
 GO
 SET ANSI_PADDING ON
 GO
+/****** Object:  UserDefinedFunction [dbo].[F_WORKS_LIST]    Script Date: 28.04.2024 19:21:25 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE FUNCTION [dbo].[F_WORKS_LIST]()
+RETURNS TABLE WITH SCHEMABINDING
+AS
+RETURN
+SELECT
+    w.Id_Work,
+    w.CREATE_Date,
+    w.MaterialNumber,
+    w.IS_Complit,
+    w.FIO,
+    CONVERT(varchar(10), w.CREATE_Date, 104) AS D_DATE,
+    ws_not.cnt  AS WorkItemsNotComplit,
+    ws_done.cnt AS WorkItemsComplit,
+    e.SURNAME + ' ' +
+      UPPER(LEFT(e.Name,1)) + '. ' +
+      UPPER(LEFT(e.Patronymic,1)) + '.'  AS FULL_NAME,
+    w.StatusId,
+    s.StatusName,
+    CASE
+      WHEN w.Print_Date       IS NOT NULL OR
+           w.SendToClientDate  IS NOT NULL OR
+           w.SendToDoctorDate  IS NOT NULL OR
+           w.SendToOrgDate     IS NOT NULL OR
+           w.SendToFax         IS NOT NULL
+      THEN 1
+      ELSE 0
+    END AS Is_Print
+FROM dbo.Works AS w
+LEFT JOIN dbo.WorkStatus  AS s ON s.StatusID   = w.StatusId
+JOIN dbo.Employee          AS e ON e.Id_Employee = w.Id_Employee
+OUTER APPLY (
+    SELECT COUNT(*) AS cnt
+    FROM dbo.WorkItem wi
+    WHERE wi.Id_Work    = w.Id_Work
+      AND wi.Is_Complit = 0
+) AS ws_not
+OUTER APPLY (
+    SELECT COUNT(*) AS cnt
+    FROM dbo.WorkItem wi
+    WHERE wi.Id_Work    = w.Id_Work
+      AND wi.Is_Complit = 1
+) AS ws_done;
+GO
 /****** Object:  Index [XAKLoginName]    Script Date: 28.04.2024 19:21:25 ******/
 CREATE UNIQUE NONCLUSTERED INDEX [XAKLoginName] ON [dbo].[Employee]
 (
@@ -404,6 +394,31 @@ CREATE NONCLUSTERED INDEX [XIF3Works] ON [dbo].[Works]
 (
 	[Id_Employee_Del] ASC
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+GO
+/****** Object:  Index [IX_WorkItem_IdWork_IsComplit]  Script Date: <today> ******/
+IF NOT EXISTS (
+    SELECT 1
+      FROM sys.indexes
+     WHERE name = 'IX_WorkItem_IdWork_IsComplit'
+       AND object_id = OBJECT_ID('dbo.WorkItem')
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_WorkItem_IdWork_IsComplit
+      ON dbo.WorkItem (Id_Work, Is_Complit)
+     INCLUDE (Price);
+END
+GO
+/****** Object:  Index [IX_Works_CreateDate_Employee]  Script Date: <today> ******/
+IF NOT EXISTS (
+    SELECT 1
+      FROM sys.indexes
+     WHERE name = 'IX_Works_CreateDate_Employee'
+       AND object_id = OBJECT_ID('dbo.Works')
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Works_CreateDate_Employee
+      ON dbo.Works (CREATE_Date DESC, Id_Employee);
+END
 GO
 ALTER TABLE [dbo].[Employee] ADD  DEFAULT (suser_sname()) FOR [Login_Name]
 GO
